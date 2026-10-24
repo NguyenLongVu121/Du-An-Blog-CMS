@@ -1,0 +1,25 @@
+{
+  "name": "blog-cms-lab",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js"
+  },
+  "overrides": {
+    "mysql2": "$mysql2"
+  },
+  "dependencies": {
+    "bcryptjs": "3.0.3",
+    "ejs": "7.0.2",
+    "express": "5.3.0",
+    "express-mysql-session": "3.0.3",
+    "express-rate-limit": "8.7.1",
+    "express-session": "1.19.0",
+    "helmet": "8.3.0",
+    "mysql2": "3.24.6"
+  }
+}

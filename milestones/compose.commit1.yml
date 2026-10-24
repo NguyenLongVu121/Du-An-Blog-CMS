@@ -1,0 +1,337 @@
+{
+  "name": "${COMPOSE_PROJECT_NAME:-blogcms}",
+  "x-common": {
+    "logging": {
+      "driver": "json-file",
+      "options": {
+        "labels": "com.docker.compose.service,com.docker.compose.project",
+        "max-file": "3",
+        "max-size": "10m"
+      }
+    },
+    "restart": "unless-stopped",
+    "security_opt": [
+      "no-new-privileges:true"
+    ]
+  },
+  "x-logging": {
+    "driver": "json-file",
+    "options": {
+      "labels": "com.docker.compose.service,com.docker.compose.project",
+      "max-file": "3",
+      "max-size": "10m"
+    }
+  },
+  "services": {
+    "app": {
+      "build": {
+        "context": "./app"
+      },
+      "cap_drop": [
+        "ALL"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "ADMIN_EMAIL": "${ADMIN_EMAIL:-admin@email.com}",
+        "ADMIN_PASSWORD": "${ADMIN_PASSWORD:?Run setup first}",
+        "MYSQL_DATABASE": "${MYSQL_DATABASE}",
+        "MYSQL_PASSWORD": "${MYSQL_PASSWORD}",
+        "MYSQL_USER": "${MYSQL_USER}",
+        "SESSION_SECRET": "${SESSION_SECRET:?Run setup first}"
+      },
+      "healthcheck": {
+        "interval": "15s",
+        "retries": 5,
+        "test": [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ],
+        "timeout": "5s"
+      },
+      "init": true,
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "labels": "com.docker.compose.service,com.docker.compose.project",
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "networks": {
+        "backend_net": null,
+        "frontend_net": null
+      },
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "tmpfs": [
+        "/tmp"
+      ]
+    },
+    "mysql": {
+      "command": [
+        "--character-set-server=utf8mb4",
+        "--collation-server=utf8mb4_unicode_ci"
+      ],
+      "environment": {
+        "MYSQL_DATABASE": "${MYSQL_DATABASE:?Run setup first}",
+        "MYSQL_EXPORTER_PASSWORD": "${MYSQL_EXPORTER_PASSWORD:?Run setup first}",
+        "MYSQL_PASSWORD": "${MYSQL_PASSWORD:?Run setup first}",
+        "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD:?Run setup first}",
+        "MYSQL_USER": "${MYSQL_USER:?Run setup first}"
+      },
+      "healthcheck": {
+        "interval": "10s",
+        "retries": 20,
+        "start_period": "60s",
+        "test": [
+          "CMD-SHELL",
+          "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql --protocol=TCP -h127.0.0.1 -u\"$$MYSQL_USER\" \"$$MYSQL_DATABASE\" -e \"SELECT 1 FROM sessions LIMIT 1\" >/dev/null 2>&1"
+        ],
+        "timeout": "5s"
+      },
+      "image": "mysql:8.0.44",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "labels": "com.docker.compose.service,com.docker.compose.project",
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "networks": {
+        "backend_net": null
+      },
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "volumes": [
+        {
+          "source": "mysql_data",
+          "target": "/var/lib/mysql",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "./db/init.sql",
+          "target": "/docker-entrypoint-initdb.d/00-schema.sql",
+          "type": "bind"
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "./db/01-users.sh",
+          "target": "/docker-entrypoint-initdb.d/01-users.sh",
+          "type": "bind"
+        },
+        {
+          "type": "bind",
+          "source": "./db/02-admin.sql",
+          "target": "/docker-entrypoint-initdb.d/02-admin.sql",
+          "read_only": true
+        }
+      ]
+    },
+    "nginx": {
+      "depends_on": {
+        "app": {
+          "condition": "service_healthy",
+          "required": true
+        },
+        "ssl-init": {
+          "condition": "service_completed_successfully",
+          "required": true
+        }
+      },
+      "healthcheck": {
+        "interval": "15s",
+        "retries": 5,
+        "test": [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/healthz"
+        ],
+        "timeout": "5s"
+      },
+      "image": "nginx:1.28.0-alpine",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "labels": "com.docker.compose.service,com.docker.compose.project",
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "networks": {
+        "frontend_net": null
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "80",
+          "target": 80
+        },
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8443",
+          "target": 443
+        }
+      ],
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "tmpfs": [
+        "/var/cache/nginx",
+        "/var/run"
+      ],
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "./nginx/nginx.conf",
+          "target": "/etc/nginx/nginx.conf",
+          "type": "bind"
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "./nginx/ssl",
+          "target": "/etc/nginx/ssl",
+          "type": "bind"
+        },
+        {
+          "source": "nginx_logs",
+          "target": "/var/log/nginx",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    },
+    "phpmyadmin": {
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "PMA_ARBITRARY": 0,
+        "PMA_HOST": "mysql",
+        "PMA_PORT": 3306,
+        "UPLOAD_LIMIT": "16M"
+      },
+      "image": "phpmyadmin:5.2.2-apache",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "labels": "com.docker.compose.service,com.docker.compose.project",
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "networks": {
+        "frontend_net": null,
+        "backend_net": null
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8081",
+          "target": 80
+        }
+      ],
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ]
+    },
+    "ssl-init": {
+      "entrypoint": [
+        "/bin/sh",
+        "/scripts/generate-ssl.sh"
+      ],
+      "image": "alpine/openssl:3.5.4",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "labels": "com.docker.compose.service,com.docker.compose.project",
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "network_mode": "none",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "./nginx/generate-ssl.sh",
+          "target": "/scripts/generate-ssl.sh",
+          "type": "bind"
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "source": "./nginx/ssl",
+          "target": "/certs",
+          "type": "bind"
+        },
+        {
+          "source": "nginx_logs",
+          "target": "/logs",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "networks": {
+    "backend_net": {
+      "driver": "bridge",
+      "internal": true
+    },
+    "frontend_net": {
+      "driver": "bridge"
+    }
+  },
+  "volumes": {
+    "mysql_data": null,
+    "nginx_logs": null
+  }
+}

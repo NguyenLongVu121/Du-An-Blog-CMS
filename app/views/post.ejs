@@ -1,0 +1,1 @@
+<%- include('header') %><article class="article"><p class="eyebrow"><%= post.category %></p><h1><%= post.title %></h1><p class="muted"><%= post.author %> · <%= new Date(post.created_at).toLocaleDateString('vi-VN') %></p><div class="prose"><%= post.body %></div><a href="/">← Về trang chủ</a></article><%- include('footer') %>

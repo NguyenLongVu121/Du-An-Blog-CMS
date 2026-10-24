@@ -1,0 +1,1 @@
+<%- include('header') %><section class="login"><p class="eyebrow">THÔNG BÁO</p><h1><%= title %></h1><p role="alert"><%= message %></p><a href="/">← Trang chủ</a><% if(user && user.role==='admin') { %> · <a href="/admin">Quản trị</a><% } %></section><%- include('footer') %>

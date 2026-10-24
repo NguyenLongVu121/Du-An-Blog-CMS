@@ -1,0 +1,195 @@
+name: ${COMPOSE_PROJECT_NAME:-blogcms}
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+    labels: 'com.docker.compose.service,com.docker.compose.project'
+x-common: &common
+  restart: unless-stopped
+  logging: *logging
+  security_opt: [no-new-privileges:true]
+services:
+  ssl-init:
+    image: alpine/openssl:3.5.4
+    entrypoint: [/bin/sh, /scripts/generate-ssl.sh]
+    volumes:
+      - ./nginx/generate-ssl.sh:/scripts/generate-ssl.sh:ro
+      - ./nginx/ssl:/certs
+      - nginx_logs:/logs
+    network_mode: none
+    logging: *logging
+    security_opt: [no-new-privileges:true]
+  mysql:
+    <<: *common
+    image: mysql:8.0.44
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Run setup first}
+      MYSQL_USER: ${MYSQL_USER:?Run setup first}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Run setup first}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Run setup first}
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?Run setup first}
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+      - ./db/01-users.sh:/docker-entrypoint-initdb.d/01-users.sh:ro
+      - ./db/02-admin.sql:/docker-entrypoint-initdb.d/02-admin.sql:ro
+    networks: [backend_net]
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -u"$$MYSQL_USER" "$$MYSQL_DATABASE" -e "SELECT 1 FROM sessions LIMIT 1" >/dev/null 2>&1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+  app:
+    <<: *common
+    build: ./app
+    init: true
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?Run setup first}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@email.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Run setup first}
+    depends_on:
+      mysql: {condition: service_healthy}
+    networks: [frontend_net, backend_net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  nginx:
+    <<: *common
+    image: nginx:1.28.0-alpine
+    ports: ['127.0.0.1:80:80', '127.0.0.1:8443:443']
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      ssl-init: {condition: service_completed_successfully}
+      app: {condition: service_healthy}
+    networks: [frontend_net]
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:8080/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  phpmyadmin:
+    <<: *common
+    image: phpmyadmin:5.2.2-apache
+    ports: ['127.0.0.1:8081:80']
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 0
+      UPLOAD_LIMIT: 16M
+    depends_on:
+      mysql: {condition: service_healthy}
+    networks: [frontend_net, backend_net]
+  nginx-exporter:
+    <<: *common
+    image: nginx/nginx-prometheus-exporter:1.4.2
+    command: [--nginx.scrape-uri=http://nginx:8080/stub_status]
+    depends_on:
+      nginx: {condition: service_healthy}
+    networks: [frontend_net, monitoring_net]
+    read_only: true
+    cap_drop: [ALL]
+  mysqld-exporter:
+    <<: *common
+    image: prom/mysqld-exporter:v0.17.2
+    command: [--config.my-cnf=, --mysqld.address=mysql:3306, --mysqld.username=exporter]
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD}
+    depends_on:
+      mysql: {condition: service_healthy}
+    networks: [backend_net, monitoring_net]
+    read_only: true
+    cap_drop: [ALL]
+  cadvisor:
+    <<: *common
+    image: ghcr.io/google/cadvisor:v0.57.0
+    ports:
+      - "8082:8080"
+    command: [--docker_only=true, --housekeeping_interval=15s]
+    privileged: true
+    devices: [/dev/kmsg:/dev/kmsg]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks: [monitoring_net]
+  prometheus:
+    <<: *common
+    image: prom/prometheus:v3.5.0
+    ports: ['127.0.0.1:9090:9090']
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=7d]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [monitoring_net]
+    cap_drop: [ALL]
+  grafana:
+    <<: *common
+    image: grafana/grafana:12.2.0
+    ports: ['127.0.0.1:3001:3000']
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [monitoring_net]
+    cap_drop: [ALL]
+  loki:
+    <<: *common
+    image: grafana/loki:3.5.7
+    command: [-config.file=/etc/loki/local-config.yaml]
+    volumes:
+      - ./logging/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks: [monitoring_net]
+    cap_drop: [ALL]
+  promtail:
+    <<: *common
+    image: grafana/promtail:3.5.7
+    command: [-config.file=/etc/promtail/config.yml]
+    volumes:
+      - ./logging/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - nginx_logs:/var/log/nginx:ro
+      - promtail_positions:/positions
+    depends_on: [loki]
+    networks: [monitoring_net]
+    cap_drop: [ALL]
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+    internal: true
+  monitoring_net:
+    driver: bridge
+volumes:
+  mysql_data:
+  nginx_logs:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:

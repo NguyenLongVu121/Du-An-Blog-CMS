@@ -1,0 +1,6 @@
+<%- include('header') %>
+<section class="hero"><p class="eyebrow">GÓC NHÌN & KIẾN THỨC</p><h1>Ghi chép hôm nay.<br>Kiến thức ngày mai.</h1><p>Không gian chia sẻ về phát triển phần mềm, hạ tầng và những điều học được.</p></section>
+<div class="filters"><a href="/">Tất cả bài viết</a><% categories.forEach(c => { %><a href="/?category=<%= c.id %>"><%= c.name %></a><% }) %></div>
+<div class="grid"><% posts.forEach((p,i) => { %><article class="card"><div class="cover tone<%= i%3 %>"><span>BÀI VIẾT / <%= String(p.id).padStart(3,'0') %></span><strong><%= p.category %></strong></div><div class="cardbody"><small><%= p.category %> · <%= new Date(p.created_at).toLocaleDateString('vi-VN') %></small><h2><a href="/posts/<%= p.id %>"><%= p.title %></a></h2><p><%= p.body.slice(0,160) %>…</p><a class="read" href="/posts/<%= p.id %>">Đọc bài viết →</a><div class="author"><%= p.author %></div></div></article><% }) %></div>
+<% if(!posts.length) { %><p class="empty">Chưa có bài viết trong danh mục này.</p><% } %>
+<%- include('footer') %>

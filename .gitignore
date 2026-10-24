@@ -1,0 +1,7 @@
+.env
+node_modules/
+nginx/ssl/*
+!nginx/ssl/.gitkeep
+backups/
+*.log
+.compose.final.yml
