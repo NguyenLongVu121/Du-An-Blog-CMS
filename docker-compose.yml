@@ -160,7 +160,10 @@ services:
   loki:
     <<: *common
     image: grafana/loki:3.5.7
-    command: [-config.file=/etc/loki/local-config.yaml]
+    command: [-config.file=/etc/loki/local-config.yaml, -target=all]
+    ports:
+      - "127.0.0.1:3100:3100"
+    stop_grace_period: 2m
     volumes:
       - ./logging/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki

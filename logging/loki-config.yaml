@@ -12,6 +12,21 @@ common:
   ring:
     kvstore:
       store: inmemory
+ingester:
+  lifecycler:
+    address: 127.0.0.1
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+    # No rollout propagation delay is needed for a single local instance.
+    min_ready_duration: 0s
+    # Still require a genuinely healthy ring and ACTIVE local ingester.
+    readiness_check_ring_health: true
+  wal:
+    enabled: true
+    dir: /loki/wal
+    flush_on_shutdown: true
 schema_config:
   configs:
     - from: 2024-01-01

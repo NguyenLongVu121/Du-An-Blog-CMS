@@ -153,7 +153,8 @@ node scripts/integration.js
 | Prometheus | http://localhost:9090 | Không có auth, chỉ bind loopback |
 | HTTP redirect | http://localhost:80 | Chuyển hướng HTTPS |
 | cAdvisor | http://localhost:8082 | Không có auth |
-| MySQL / Loki / exporters / app | Không publish | Chỉ truy cập nội bộ Docker |
+| Loki | http://127.0.0.1:3100/ready | Health/API, chỉ bind loopback; không có trang chủ UI |
+| MySQL / exporters / app | Không publish | Chỉ truy cập nội bộ Docker |
 
 `editor@example.com` là tác giả dữ liệu mẫu, tài khoản ban đầu bị khóa bằng password hash không sử dụng được. Admin có thể đặt mật khẩu và dùng nó để demo vai trò `reader`: xem bài công khai, không có quyền quản trị. Theo yêu cầu demo, MySQL có tài khoản quản trị admin/123456 (ALL PRIVILEGES trên *.* WITH GRANT OPTION), Grafana dùng admin/admin. CMS vẫn dùng tài khoản DB blogapp hạn chế quyền và mật khẩu riêng. Root MySQL chỉ dùng cho bootstrap/bảo trì; không nhập root vào app/phpMyAdmin trong demo thường ngày.
 
@@ -439,3 +440,31 @@ powershell -ExecutionPolicy Bypass -File ./scripts/smoke.ps1
 ```
 
 Nếu đang mở trang cũ, truy cập lại URL có `:8443` và tải mới bằng Ctrl+F5. Chứng chỉ lab giữ nguyên vì SAN áp dụng cho hostname, không phụ thuộc cổng.
+
+
+## 16. Loki standalone và kiểm tra readiness trên host
+
+Các file cấu hình thay đổi: `docker-compose.yml` và `logging/loki-config.yaml`.
+
+- Publish `127.0.0.1:3100:3100`; image vẫn là grafana/loki:3.5.7, command đặt rõ `-target=all` (single-binary).
+- Ring common/ingester dùng `inmemory`, địa chỉ quảng bá loopback, replication factor 1. Một instance không cần nhiều replica hoặc dịch vụ Consul/memberlist.
+- `min_ready_duration: 0s` bỏ thời gian đợi lan truyền ring dành cho rollout; `readiness_check_ring_health: true` vẫn giữ kiểm tra sức khỏe thật. HTTP 503 trong lúc replay WAL hoặc module chưa khởi động xong vẫn là bình thường, không bị che bằng healthcheck giả.
+- WAL tiếp tục dùng `/loki/wal`, bật flush khi shutdown và dành `stop_grace_period: 2m` để Loki đóng an toàn.
+- Giữ volume `blogcms_loki_data` mount `/loki`, schema v13/TSDB, thời điểm schema, đường dẫn chunks/rules/index và compactor. Retention 168h hiện có không thay đổi; log quá hạn vẫn tuân theo chính sách retention cũ.
+- Giữ x-logging, x-common, security_opt, mạng monitoring_net và cap_drop như trước. Chỉ recreate Loki, không hạ toàn bộ hệ thống.
+
+Lệnh PowerShell an toàn:
+
+```powershell
+docker compose config --quiet
+# Validate-only; không chạy một server thứ hai ghi vào cùng volume:
+docker compose exec -T loki /usr/bin/loki '-config.file=/etc/loki/local-config.yaml' '-verify-config=true'
+docker compose up -d --no-deps --force-recreate loki
+curl.exe -i http://127.0.0.1:3100/ready
+docker compose logs --tail=50 loki
+docker inspect blogcms-loki-1 --format '{{range .Mounts}}{{if eq .Destination "/loki"}}{{.Name}} -> {{.Destination}}{{end}}{{end}}'
+```
+
+Nếu vừa khởi động, đợi replay WAL/module hoàn tất rồi gọi lại `/ready`; endpoint phải trả 200 với nội dung `ready`. Loki là API, `/` không phải giao diện quản trị; xem log trong Grafana Explore. Không cần chạy `down`; tuyệt đối không dùng `down -v`, `volume rm` hoặc đổi tên/path volume khi áp dụng thay đổi này.
+
+Tham khảo ý nghĩa tham số readiness: https://grafana.com/docs/loki/latest/configure/ (ingester lifecycler).
